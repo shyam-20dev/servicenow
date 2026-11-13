@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 const card = { background: "#fff", borderRadius: 10, padding: 16, boxShadow: "0 1px 3px #0001", marginBottom: 12 };
@@ -76,6 +77,15 @@ export default function Home() {
         {notice && <div style={{ marginTop: 8, color: "#1a6" }}>{notice}</div>}
       </div>
 
+      <div style={{ marginBottom: 12 }}>
+        <Link href="/evaluation" style={{ fontSize: 13, padding: "4px 10px", border: "1px solid #0b6bcb", borderRadius: 6, color: "#0b6bcb", textDecoration: "none", background: "#fff" }}>
+          View AI evaluation →
+        </Link>
+        <Link href="/knowledge" style={{ fontSize: 13, padding: "4px 10px", border: "1px solid #0b6bcb", borderRadius: 6, color: "#0b6bcb", textDecoration: "none", background: "#fff", marginLeft: 8 }}>
+          Knowledge base →
+        </Link>
+      </div>
+
       {problems.map((p) => (
         <div key={p.id} style={{ ...card, borderLeft: "4px solid #d9822b" }}>
           <strong>{p.number} · {p.title}</strong>
@@ -99,6 +109,11 @@ export default function Home() {
               <div><b>Summary:</b> {t.ai.summary}</div>
               <div><b>Category:</b> {t.ai.category} · <b>Priority:</b> {t.ai.priority} · <b>Team:</b> {t.ai.assignment_group}</div>
               <ol style={{ margin: "6px 0 0 18px", padding: 0 }}>{t.ai.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+              {t.ai.sources?.length > 0 && (
+                <div style={{ marginTop: 6, fontSize: 13, color: "#556" }}>
+                  Based on: {t.ai.sources.map((x) => <span key={x.id} style={{ marginRight: 10 }}>KB{x.id} {x.title} ({x.score})</span>)}
+                </div>
+              )}
             </div>
           )}
           <button style={btn} disabled={busy === `a${t.id}`} onClick={() => run(`a${t.id}`, () => api(`/tickets/${t.id}/analyze`, { method: "POST" }))}>

@@ -18,14 +18,19 @@ class Triage(BaseModel):
     assignment_group: str
     reasoning: str = ""
     steps: list[str] = Field(default_factory=list)
+    corrected: list[str] = Field(default_factory=list)  # fields replaced by safe defaults
 
     def check(self) -> "Triage":
+        self.corrected = []
         if self.category not in CATEGORIES:
             self.category = "Other"
+            self.corrected.append("category")
         if self.priority not in PRIORITIES:
             self.priority = "Medium"
+            self.corrected.append("priority")
         if self.assignment_group not in GROUPS:
             self.assignment_group = "Service Desk"
+            self.corrected.append("assignment_group")
         return self
 
 
@@ -38,14 +43,25 @@ steps (list of 3-5 troubleshooting steps).
 Your answer is only a suggestion that a human agent will review."""
 
 
-async def triage(short_description: str, description: str) -> Triage:
+def _context_block(context) -> str:
+    return "\n\n".join(f"[KB{a['id']}] {a['title']}\n{a['body']}" for a in context)
+
+
+GROUNDING = """
+Relevant knowledge base articles are provided. Base the troubleshooting steps on them
+where they apply. Do not invent steps that contradict them."""
+
+
+async def triage(short_description: str, description: str, context=None) -> Triage:
     text = redact(f"{short_description}\n{description}")
+    if context:
+        text += "\n\nKnowledge base articles:\n" + _context_block(context)
     payload = {
         "model": config.OLLAMA_MODEL,
         "stream": False,
         "format": "json",
         "messages": [
-            {"role": "system", "content": PROMPT},
+            {"role": "system", "content": PROMPT + (GROUNDING if context else "")},
             {"role": "user", "content": text},
         ],
     }
@@ -135,3 +151,21 @@ async def draft_problem(samples: list[str], attempts: int = 3) -> ProblemDraft:
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as e:
             last_error = str(e)
     raise ValueError(f"LLM returned invalid problem draft after {attempts} attempts: {last_error}")
+
+
+# ---------- RAG answer ----------
+ASK_PROMPT = """You are an IT support assistant. Answer the question using ONLY the knowledge base
+articles provided. Be concise (max 6 sentences or a short numbered list). If the articles do not
+contain the answer, say you do not know. Mention the article ids you used, like [KB3]."""
+
+
+async def answer(question: str, context) -> str:
+    payload = {
+        "model": config.OLLAMA_MODEL, "stream": False, "options": {"temperature": 0.2},
+        "messages": [{"role": "system", "content": ASK_PROMPT},
+                     {"role": "user", "content": f"Question: {redact(question)}\n\nArticles:\n{_context_block(context)}"}],
+    }
+    async with httpx.AsyncClient(timeout=180) as client:
+        r = await client.post(f"{config.OLLAMA_HOST}/api/chat", json=payload)
+        r.raise_for_status()
+    return r.json()["message"]["content"].strip()
