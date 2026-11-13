@@ -1,9 +1,8 @@
 import json
 
-import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from . import config
+from . import providers
 from .redact import redact
 
 CATEGORIES = ["Network", "Hardware", "Software", "Access", "Email", "Other"]
@@ -56,49 +55,22 @@ async def triage(short_description: str, description: str, context=None) -> Tria
     text = redact(f"{short_description}\n{description}")
     if context:
         text += "\n\nKnowledge base articles:\n" + _context_block(context)
-    payload = {
-        "model": config.OLLAMA_MODEL,
-        "stream": False,
-        "format": "json",
-        "messages": [
-            {"role": "system", "content": PROMPT + (GROUNDING if context else "")},
-            {"role": "user", "content": text},
-        ],
-    }
-    async with httpx.AsyncClient(timeout=180) as client:
-        r = await client.post(f"{config.OLLAMA_HOST}/api/chat", json=payload)
-        r.raise_for_status()
-    content = r.json()["message"]["content"]
+    content = await providers.chat(PROMPT + (GROUNDING if context else ""), text, json_mode=True)
     try:
         return Triage(**json.loads(content)).check()
     except (json.JSONDecodeError, ValidationError, TypeError) as e:
         raise ValueError(f"LLM returned invalid output: {e}") from e
 
 
-async def ollama_status() -> dict:
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{config.OLLAMA_HOST}/api/tags")
-            r.raise_for_status()
-        models = [m["name"] for m in r.json().get("models", [])]
-        return {"up": True, "models": models, "model_ready": any(
-            m.split(":")[0] == config.OLLAMA_MODEL.split(":")[0] for m in models)}
-    except Exception as e:
-        return {"up": False, "error": str(e)}
+async def llm_status() -> dict:
+    return await providers.status()
 
 
 # ---------- Embeddings ----------
-async def embed(texts: list[str]) -> list[list[float]]:
-    """Embed texts with the local Ollama embedding model (redacted first)."""
-    out: list[list[float]] = []
-    async with httpx.AsyncClient(timeout=180) as client:
-        for i in range(0, len(texts), 32):
-            batch = [redact(t) for t in texts[i:i + 32]]
-            r = await client.post(f"{config.OLLAMA_HOST}/api/embed",
-                                  json={"model": config.OLLAMA_EMBED_MODEL, "input": batch})
-            r.raise_for_status()
-            out.extend(r.json()["embeddings"])
-    return out
+async def embed(texts: list[str], task: str = "similarity") -> list[list[float]]:
+    """Embed texts with the configured provider (personal data redacted first).
+    task: "document" or "query" for retrieval, "similarity" for clustering."""
+    return await providers.embed([redact(t) for t in texts], task)
 
 
 # ---------- Problem drafting ----------
@@ -130,19 +102,11 @@ def _unwrap(data):
 
 async def draft_problem(samples: list[str], attempts: int = 3) -> ProblemDraft:
     text = "\n".join(f"- {redact(s)}" for s in samples)
-    payload = {
-        "model": config.OLLAMA_MODEL, "stream": False, "format": "json",
-        "options": {"temperature": 0.2},
-        "messages": [{"role": "system", "content": PROBLEM_PROMPT},
-                     {"role": "user", "content": text}],
-    }
     last_error = "unknown"
     for _ in range(attempts):
-        async with httpx.AsyncClient(timeout=180) as client:
-            r = await client.post(f"{config.OLLAMA_HOST}/api/chat", json=payload)
-            r.raise_for_status()
+        content = await providers.chat(PROBLEM_PROMPT, text, json_mode=True, temperature=0.2)
         try:
-            data = _unwrap(json.loads(r.json()["message"]["content"]))
+            data = _unwrap(json.loads(content))
             if data is None:
                 raise ValueError("answer is missing title/root_cause")
             if isinstance(data.get("actions"), str):
@@ -160,12 +124,30 @@ contain the answer, say you do not know. Mention the article ids you used, like 
 
 
 async def answer(question: str, context) -> str:
-    payload = {
-        "model": config.OLLAMA_MODEL, "stream": False, "options": {"temperature": 0.2},
-        "messages": [{"role": "system", "content": ASK_PROMPT},
-                     {"role": "user", "content": f"Question: {redact(question)}\n\nArticles:\n{_context_block(context)}"}],
-    }
-    async with httpx.AsyncClient(timeout=180) as client:
-        r = await client.post(f"{config.OLLAMA_HOST}/api/chat", json=payload)
-        r.raise_for_status()
-    return r.json()["message"]["content"].strip()
+    user = f"Question: {redact(question)}\n\nArticles:\n{_context_block(context)}"
+    return (await providers.chat(ASK_PROMPT, user, temperature=0.2)).strip()
+
+
+# ---------- Assistant (conversational RAG) ----------
+REWRITE_PROMPT = """Rewrite the user's last question as one standalone search query, using the conversation
+to resolve words like "it", "that" or "the second one". Return ONLY the query text, nothing else."""
+
+CHAT_PROMPT = """You are an IT support assistant. Answer using ONLY the numbered passages from the company's
+uploaded documents. Rules: be concise; cite the passage ids you used like [KB3]; if the passages do not
+contain the answer, say you could not find it in the documents. Never use outside knowledge."""
+
+
+def _history_text(history) -> str:
+    return "\n".join(f"{m['role'].capitalize()}: {redact(m['content'])[:500]}" for m in history[-6:])
+
+
+async def rewrite_query(history, question: str) -> str:
+    user = f"Conversation:\n{_history_text(history)}\n\nLast question: {redact(question)}"
+    out = (await providers.chat(REWRITE_PROMPT, user, temperature=0)).strip().strip('"')
+    return out.splitlines()[0][:300] if out else question
+
+
+async def chat_answer(question: str, history, context) -> str:
+    user = (f"Conversation so far:\n{_history_text(history)}\n\n" if history else "") + \
+           f"Question: {redact(question)}\n\nPassages:\n{_context_block(context)}"
+    return (await providers.chat(CHAT_PROMPT, user, temperature=0.2)).strip()

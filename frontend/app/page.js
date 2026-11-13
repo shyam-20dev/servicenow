@@ -1,131 +1,123 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { api } from "../lib/api";
 
-const card = { background: "#fff", borderRadius: 10, padding: 16, boxShadow: "0 1px 3px #0001", marginBottom: 12 };
-const btn = { padding: "6px 12px", borderRadius: 6, border: "1px solid #0b6bcb", background: "#0b6bcb", color: "#fff", cursor: "pointer", marginRight: 8 };
+const PRI_COLOR = { Low: "#98a2b3", Medium: "#2f6df6", High: "#d97706", Critical: "#dc2626", "Not analysed": "#d0d5dd" };
 
-async function api(path, opts) {
-  const r = await fetch(`/api${path}`, { headers: { "Content-Type": "application/json" }, ...opts });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || r.statusText);
-  return data;
+function Tile({ label, value, hint, href, alert }) {
+  const inner = (<><div className="label">{label}</div><div className="value">{value}</div>{hint && <div className="hint">{hint}</div>}</>);
+  return href ? <Link href={href} className={`tile ${alert ? "alert" : ""}`}>{inner}</Link> : <div className={`tile ${alert ? "alert" : ""}`}>{inner}</div>;
 }
 
-export default function Home() {
-  const [tickets, setTickets] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [problems, setProblems] = useState([]);
-  const [notice, setNotice] = useState("");
-  const [health, setHealth] = useState(null);
-  const [form, setForm] = useState({ short_description: "", description: "" });
-  const [busy, setBusy] = useState(null);
+function Bars({ rows, color }) {
+  const real = rows.filter((r) => r.label !== "Not analysed");
+  const pending = rows.find((r) => r.label === "Not analysed")?.n || 0;
+  const max = Math.max(1, ...real.map((r) => r.n));
+  if (!real.length && !pending) return <div className="muted small">No tickets yet.</div>;
+  return (
+    <div className="bars">
+      {real.map((r) => (
+        <div className="r" key={r.label}>
+          <span>{r.label}</span>
+          <div className="track"><div className="fill" style={{ width: `${(100 * r.n) / max}%`, background: color?.(r.label) }} /></div>
+          <b>{r.n}</b>
+        </div>
+      ))}
+      {!real.length && <div className="muted small">No AI-analysed tickets yet.</div>}
+      {pending > 0 && <div className="muted small" style={{ marginTop: 8 }}>{pending} ticket{pending === 1 ? "" : "s"} not analysed by the AI yet</div>}
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const [d, setD] = useState(null);
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
-    try {
-      const t = await api("/tickets?limit=20");
-      setTickets(t.tickets); setTotal(t.total);
-      setProblems(await api("/problems"));
-    } catch (e) { setError(e.message); }
+    try { setD(await api("/dashboard")); setError(""); } catch (e) { setError(e.message); }
   }, []);
-
-  useEffect(() => {
-    load();
-    api("/health").then(setHealth).catch(() => setHealth(null));
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   async function run(key, fn) {
-    setBusy(key); setError("");
+    setBusy(key); setNote(""); setError("");
     try { await fn(); await load(); } catch (e) { setError(e.message); }
-    setBusy(null);
+    setBusy("");
   }
 
-  const dot = (ok) => <span style={{ color: ok ? "#1a9d4b" : "#d33" }}>●</span>;
+  if (!d) return error ? null : <div className="muted">Loading…</div>;
+  const s = d.by_status;
+  const openCount = (s.open || 0) + (s.in_progress || 0);
+  const doneCount = (s.resolved || 0) + (s.closed || 0);
 
   return (
-    <main style={{ maxWidth: 860, margin: "0 auto", padding: 24 }}>
-      <h1 style={{ marginBottom: 4 }}>ProblemLens</h1>
-      <p style={{ marginTop: 0, color: "#556" }}>AI-assisted IT service desk. The AI only suggests; a human reviews.</p>
+    <>
+      {error && <div className="banner">{error}</div>}
+      {d.total === 0 && (
+        <div className="banner info">No tickets yet. <Link href="/report"><b>Report an issue</b></Link> to see the AI at work, or load demo data below.</div>
+      )}
 
-      <div style={card}>
-        {health ? (
-          <>
-            {dot(health.api)} API &nbsp; {dot(health.ollama?.up && health.ollama?.model_ready)} Ollama
-            {health.ollama?.up && !health.ollama?.model_ready && " (model not pulled)"} &nbsp;
-            {dot(health.servicenow?.ok)} ServiceNow {health.servicenow?.error && <small>({health.servicenow.error})</small>}
-          </>
-        ) : "Checking services…"}
+      <div className="grid g-tiles">
+        <Tile label="Total tickets" value={d.total} hint={`${d.analysed} analysed by AI`} href="/tickets" />
+        <Tile label="Open / in progress" value={openCount} hint={`${s.in_progress || 0} in progress`} href="/tickets" />
+        <Tile label="Resolved / closed" value={doneCount} />
+        <Tile label="Needs human review" value={d.pending_review} hint="AI is unsure or the ticket is high impact" href="/tickets?tab=review" alert={d.pending_review > 0} />
+        <Tile label="AI override rate" value={d.override_rate == null ? "–" : `${d.override_rate}%`} hint={d.reviewed ? `${d.overridden} of ${d.reviewed} reviewed tickets changed` : "No human reviews yet"} />
+        <Tile label="Avg AI analysis time" value={d.avg_ai_seconds == null ? "–" : `${d.avg_ai_seconds}s`} hint={`${d.auto_handled} tickets auto-handled`} />
       </div>
 
-      <form style={card} onSubmit={(e) => { e.preventDefault(); run("create", async () => { await api("/tickets", { method: "POST", body: JSON.stringify(form) }); setForm({ short_description: "", description: "" }); }); }}>
-        <h3 style={{ marginTop: 0 }}>Report an issue</h3>
-        <input required placeholder="Short description" value={form.short_description} onChange={(e) => setForm({ ...form, short_description: e.target.value })} style={{ width: "100%", padding: 8, marginBottom: 8, boxSizing: "border-box" }} />
-        <textarea required placeholder="Describe the problem" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} style={{ width: "100%", padding: 8, marginBottom: 8, boxSizing: "border-box" }} />
-        <button style={btn} disabled={busy === "create"}>Submit ticket</button>
-      </form>
-
-      <div style={card}>
-        <h3 style={{ marginTop: 0 }}>Problem detection</h3>
-        <p style={{ marginTop: 0, color: "#556" }}>{total} tickets in the system. Detection groups similar recent tickets with embeddings and drafts a Problem for each spike.</p>
-        <button style={btn} disabled={busy === "seed"} onClick={() => run("seed", async () => { const r = await api("/demo/seed", { method: "POST" }); setNotice(`Loaded ${r.tickets} synthetic tickets (with hidden incident spikes).`); })}>
-          {busy === "seed" ? "Loading…" : "Load demo data"}
-        </button>
-        <button style={btn} disabled={busy === "detect"} onClick={() => run("detect", async () => { const r = await api("/problems/detect", { method: "POST" }); setNotice(`Embedded ${r.embedded} tickets, checked ${r.tickets_considered} recent ones, found ${r.clusters_found} spike(s).`); })}>
-          {busy === "detect" ? "Detecting… (can take a minute)" : "Detect problems"}
-        </button>
-        {notice && <div style={{ marginTop: 8, color: "#1a6" }}>{notice}</div>}
+      <div className="grid g-2">
+        <div className="card"><h2>Tickets by category</h2><p className="sub">After any human corrections</p><Bars rows={d.by_category} /></div>
+        <div className="card"><h2>Tickets by priority</h2><p className="sub">After any human corrections</p><Bars rows={d.by_priority} color={(l) => PRI_COLOR[l]} /></div>
       </div>
 
-      <div style={{ marginBottom: 12 }}>
-        <Link href="/evaluation" style={{ fontSize: 13, padding: "4px 10px", border: "1px solid #0b6bcb", borderRadius: 6, color: "#0b6bcb", textDecoration: "none", background: "#fff" }}>
-          View AI evaluation →
-        </Link>
-        <Link href="/knowledge" style={{ fontSize: 13, padding: "4px 10px", border: "1px solid #0b6bcb", borderRadius: 6, color: "#0b6bcb", textDecoration: "none", background: "#fff", marginLeft: 8 }}>
-          Knowledge base →
-        </Link>
-      </div>
-
-      {problems.map((p) => (
-        <div key={p.id} style={{ ...card, borderLeft: "4px solid #d9822b" }}>
-          <strong>{p.number} · {p.title}</strong>
-          <span style={{ marginLeft: 8, color: "#a60" }}>{p.status} (AI draft, needs review)</span>
-          <div style={{ margin: "6px 0" }}>{p.ticket_count} related tickets · {p.first_seen} → {p.last_seen} UTC</div>
-          <div><b>Suspected cause:</b> {p.root_cause}</div>
-          <ol style={{ margin: "6px 0 0 18px", padding: 0 }}>{p.actions.map((a, i) => <li key={i}>{a}</li>)}</ol>
-        </div>
-      ))}
-
-      {error && <div style={{ ...card, background: "#fdecec", color: "#a11" }}>{error}</div>}
-
-      <h3>Latest tickets (showing {tickets.length} of {total})</h3>
-      {tickets.map((t) => (
-        <div key={t.id} style={card}>
-          <strong>#{t.id} {t.short_description}</strong>
-          {t.sn_number && <span style={{ marginLeft: 8, color: "#1a9d4b" }}>Incident {t.sn_number}</span>}
-          <p style={{ margin: "6px 0" }}>{t.description}</p>
-          {t.ai && (
-            <div style={{ background: "#eef5ff", borderRadius: 8, padding: 10, marginBottom: 8 }}>
-              <div><b>Summary:</b> {t.ai.summary}</div>
-              <div><b>Category:</b> {t.ai.category} · <b>Priority:</b> {t.ai.priority} · <b>Team:</b> {t.ai.assignment_group}</div>
-              <ol style={{ margin: "6px 0 0 18px", padding: 0 }}>{t.ai.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
-              {t.ai.sources?.length > 0 && (
-                <div style={{ marginTop: 6, fontSize: 13, color: "#556" }}>
-                  Based on: {t.ai.sources.map((x) => <span key={x.id} style={{ marginRight: 10 }}>KB{x.id} {x.title} ({x.score})</span>)}
-                </div>
-              )}
+      <div className="grid g-2">
+        <div className="card">
+          <h2>Tickets per day</h2><p className="sub">Last 7 days with activity</p>
+          {d.per_day.length === 0 ? <div className="muted small">No data yet.</div> : (
+            <div className="cols">
+              {d.per_day.map((r) => {
+                const max = Math.max(...d.per_day.map((x) => x.n));
+                return <div className="c" key={r.day}><b>{r.n}</b><i style={{ height: `${(100 * r.n) / max}%` }} /><span>{r.day.slice(5)}</span></div>;
+              })}
             </div>
           )}
-          <button style={btn} disabled={busy === `a${t.id}`} onClick={() => run(`a${t.id}`, () => api(`/tickets/${t.id}/analyze`, { method: "POST" }))}>
-            {busy === `a${t.id}` ? "Analyzing…" : "AI analyze"}
-          </button>
-          {!t.sn_number && (
-            <button style={btn} disabled={busy === `p${t.id}`} onClick={() => run(`p${t.id}`, () => api(`/tickets/${t.id}/push`, { method: "POST" }))}>
-              Create incident
-            </button>
-          )}
         </div>
-      ))}
-    </main>
+        <div className="card">
+          <div className="row spread"><h2>Incident spikes (Problems)</h2>
+            <button className="btn sm" disabled={busy === "detect"} onClick={() => run("detect", async () => { const r = await api("/problems/detect", { method: "POST" }); setNote(`Checked ${r.tickets_considered} recent tickets, found ${r.clusters_found} spike(s).`); })}>{busy === "detect" ? "Detecting…" : "Detect problems"}</button>
+          </div>
+          <p className="sub">Groups of similar recent tickets that probably share one cause</p>
+          {note && <div className="banner ok" style={{ padding: "8px 12px" }}>{note}</div>}
+          {d.problems.length === 0 ? <div className="muted small">No Problems detected. Needs 5+ similar tickets within an hour.</div> :
+            d.problems.map((p) => (
+              <div key={p.id} style={{ padding: "9px 0", borderTop: "1px solid #eef0f4" }}>
+                <b>{p.number}</b> · {p.title}
+                <div className="small muted">{p.ticket_count} related tickets · <span className="badge b-amber">{p.status}: AI draft</span></div>
+              </div>
+            ))}
+        </div>
+      </div>
+
+      <div className="grid g-2">
+        <div className="card">
+          <h2>Knowledge base</h2>
+          <p className="sub">What the AI Assistant can answer from</p>
+          <div className="kv"><span className="badge b-blue">{d.kb.files} uploaded files</span><span className="badge">{d.kb.articles} written articles</span><span className="badge">{d.kb.passages} searchable passages</span></div>
+          <div className="row" style={{ marginTop: 12 }}><Link className="btn ghost sm" href="/knowledge">Manage knowledge base</Link><Link className="btn ghost sm" href="/assistant">Ask the AI Assistant</Link></div>
+        </div>
+        <div className="card">
+          <h2>AI quality &amp; demo tools</h2>
+          <p className="sub">Demo data has hidden labels so the AI can be scored against the truth</p>
+          <div className="row">
+            <button className="btn sm" disabled={busy === "seed"} onClick={() => run("seed", async () => { const r = await api("/demo/seed", { method: "POST" }); setNote(`Loaded ${r.tickets} demo tickets.`); })}>{busy === "seed" ? "Loading…" : "Load demo data"}</button>
+            <button className="btn danger sm" disabled={busy === "clear"} onClick={() => run("clear", async () => { const r = await api("/demo/clear", { method: "POST" }); setNote(`Removed ${r.deleted_tickets} demo tickets.`); })}>Clear demo data</button>
+            <Link className="btn ghost sm" href="/evaluation">AI accuracy report →</Link>
+          </div>
+        </div>
+      </div>
+    </>
   );
 }

@@ -36,7 +36,21 @@ if ! have pm2; then
   npm install -g pm2 || die "Could not install pm2 globally. Try with sudo (Linux) or an admin shell (Windows)."
 fi
 
-# ---------- Ollama ----------
+# ---------- .env ----------
+if [ ! -f .env ]; then
+  cp .env.example .env
+  warn "Created .env. Edit it and set SN_PASSWORD (your ServiceNow admin password)."
+fi
+# shellcheck disable=SC1091
+set -a; . ./.env; set +a
+PROVIDER="${LLM_PROVIDER:-ollama}"
+log "LLM provider: $PROVIDER"
+if [ "$PROVIDER" = gemini ] && [ -z "${GEMINI_API_KEY:-}" ]; then
+  warn "LLM_PROVIDER=gemini but GEMINI_API_KEY is empty in .env. Add your key, then run 'pm2 restart all --update-env'."
+fi
+
+# ---------- Ollama (only for the local provider) ----------
+if [ "$PROVIDER" = ollama ]; then
 if ! have ollama; then
   log "Installing Ollama"
   case "$OS" in
@@ -51,14 +65,8 @@ if ! have ollama; then
       ;;
   esac
 fi
-
-# ---------- .env ----------
-if [ ! -f .env ]; then
-  cp .env.example .env
-  warn "Created .env. Edit it and set SN_PASSWORD (your ServiceNow admin password)."
 fi
-# shellcheck disable=SC1091
-set -a; . ./.env; set +a
+
 
 # ---------- Backend ----------
 log "Setting up backend (Python venv)"
@@ -73,16 +81,18 @@ log "Setting up frontend (Next.js)"
 
 # ---------- Start Ollama (via the pm2 wrapper) and pull models ----------
 mkdir -p logs
-pm2 delete pl-ollama >/dev/null 2>&1 || true
-pm2 start ecosystem.config.js --only pl-ollama
-log "Waiting for Ollama"
-HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
-for _ in $(seq 1 30); do curl -fs "$HOST/api/tags" >/dev/null 2>&1 && break; sleep 1; done
-curl -fs "$HOST/api/tags" >/dev/null 2>&1 || die "Ollama did not start. Run 'ollama serve' to see why."
+if [ "$PROVIDER" = ollama ]; then
+  pm2 delete pl-ollama >/dev/null 2>&1 || true
+  pm2 start ecosystem.config.js --only pl-ollama
+  log "Waiting for Ollama"
+  HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
+  for _ in $(seq 1 30); do curl -fs "$HOST/api/tags" >/dev/null 2>&1 && break; sleep 1; done
+  curl -fs "$HOST/api/tags" >/dev/null 2>&1 || die "Ollama did not start. Run 'ollama serve' to see why."
 
-log "Pulling models (first time can take a few minutes)"
-ollama pull "${OLLAMA_MODEL:-llama3.2:3b}"
-ollama pull "${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+  log "Pulling models (first time can take a few minutes)"
+  ollama pull "${OLLAMA_MODEL:-llama3.2:3b}"
+  ollama pull "${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+fi
 
 # ---------- Start everything ----------
 log "Starting all services with pm2"

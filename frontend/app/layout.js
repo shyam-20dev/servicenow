@@ -1,11 +1,12 @@
-export const metadata = { title: "ProblemLens", description: "AI-assisted IT service desk" };
+import "./globals.css";
+import Shell from "../components/Shell";
+
+export const metadata = { title: "ProblemLens", description: "AI-assisted IT service management" };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#f4f6f8", color: "#1b2733" }}>
-        {children}
-      </body>
+      <body><Shell>{children}</Shell></body>
     </html>
   );
 }

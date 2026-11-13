@@ -51,9 +51,9 @@ export default function Evaluation() {
   const tr = m?.triage, cl = m?.clustering, job = m?.job;
 
   return (
-    <main style={{ maxWidth: 860, margin: "0 auto", padding: 24 }}>
-      <Link href="/" style={{ color: "#0b6bcb", textDecoration: "none" }}>← Back to tickets</Link>
-      <h1 style={{ marginBottom: 4 }}>Evaluation</h1>
+    <main>
+      <Link href="/" style={{ color: "#0b6bcb", textDecoration: "none" }}>← Back to Dashboard</Link>
+      <h2 style={{ margin: "10px 0 4px" }}>AI accuracy report</h2>
       <p style={{ marginTop: 0, color: "#556" }}>
         How good is the AI? Synthetic tickets carry ground-truth labels, so the AI's answers can be scored.
       </p>

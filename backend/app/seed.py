@@ -67,6 +67,7 @@ SPIKES = [
                 "Outlook has been stuck on 'trying to connect' for an hour, webmail is also slow."]),
 ]
 
+REQUESTERS = ["Asha Rao", "Vikram Shah", "Meera Iyer", "Rahul Verma", "Priya Nair", "Karthik S", "Neha Gupta", "Arjun Menon"]
 FLOORS = ["1st", "2nd", "3rd", "4th", "5th"]
 APPS = ["Photoshop", "Visual Studio", "Zoom", "Slack", "AutoCAD", "Python", "Docker", "Excel add-in"]
 
@@ -92,12 +93,19 @@ def seed(background: int = 280) -> dict:
             rows.append((rng.choice(sp["shorts"]), rng.choice(sp["descs"]),
                          sp["category"], sp["priority"], sp["group"], sp["scenario"], ts))
 
+    def status_for(age_minutes: int) -> str:     # older tickets are more likely to be finished
+        roll = rng.random()
+        if age_minutes < 120:
+            return "open" if roll < 0.8 else "in_progress"
+        return "resolved" if roll < 0.55 else "closed" if roll < 0.7 else "in_progress" if roll < 0.85 else "open"
+
     with db.conn() as c:
         c.execute("DELETE FROM problems")
         c.execute("DELETE FROM tickets WHERE is_synthetic=1")
         c.executemany(
             """INSERT INTO tickets (short_description, description, label_category, label_priority,
-               label_group, scenario, is_synthetic, created_at) VALUES (?,?,?,?,?,?,1,?)""",
-            [(s, d, cat, pr, g, sc, ts.strftime("%Y-%m-%d %H:%M:%S")) for s, d, cat, pr, g, sc, ts in rows],
+               label_group, scenario, is_synthetic, created_at, requester, status) VALUES (?,?,?,?,?,?,1,?,?,?)""",
+            [(s, d, cat, pr, g, sc, ts.strftime("%Y-%m-%d %H:%M:%S"), rng.choice(REQUESTERS),
+              status_for(int((now - ts).total_seconds() // 60))) for s, d, cat, pr, g, sc, ts in rows],
         )
     return {"tickets": len(rows), "spikes": [{"scenario": s["scenario"], "count": s["count"]} for s in SPIKES]}

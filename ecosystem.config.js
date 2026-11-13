@@ -19,20 +19,23 @@ const venvPython = isWin
 const backendPort = env.BACKEND_PORT || "8000";
 const frontendPort = env.FRONTEND_PORT || "3000";
 
+const useOllama = (env.LLM_PROVIDER || "ollama").toLowerCase() !== "gemini";
+
 module.exports = {
   apps: [
-    {
+    // Local model server: only needed when LLM_PROVIDER=ollama
+    ...(useOllama ? [{
       name: "pl-ollama",
       script: path.join(__dirname, "scripts", "ollama-serve.js"),
       env,
-    },
+    }] : []),
     {
       name: "pl-backend",
       cwd: path.join(__dirname, "backend"),
       script: venvPython,
       interpreter: "none",
       args: `-m uvicorn app.main:app --host 0.0.0.0 --port ${backendPort}`,
-      env,
+      // no env here: the backend loads ../.env itself, so `pm2 restart pl-backend` picks up .env edits
     },
     {
       name: "pl-frontend",

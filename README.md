@@ -24,15 +24,29 @@ Requires Node 18+ and Python 3.10+. The script installs pm2 and Ollama, creates 
 - `ecosystem.config.js` pm2 processes: `pl-ollama`, `pl-backend`, `pl-frontend`
 - `scripts/ollama-serve.js` starts Ollama only if one isn't already running
 
+## Choosing the LLM
+
+Set `LLM_PROVIDER` in `.env`:
+
+- `ollama` (default): a local model. `setup.sh` installs Ollama and pulls `OLLAMA_MODEL` and `OLLAMA_EMBED_MODEL`. Nothing leaves your machine.
+- `gemini`: the Gemini API. Set `GEMINI_API_KEY` (and optionally `GEMINI_MODEL`, `GEMINI_EMBED_MODEL`). Ollama is not installed or started. Ticket text is sent to Google, after basic masking of emails, phone numbers and IPs.
+
+After changing it run `pm2 restart all --update-env`. Embeddings from different models are not comparable, so when the embedding model changes the stored ticket and article embeddings are cleared and rebuilt automatically. `KB_MIN_SCORE`, `KB_REL_MARGIN` and `CLUSTER_THRESHOLD` can be tuned per model. Defaults were measured on the demo data: Ollama 0.58 / 0.15 / 0.70, Gemini 0.60 / 0.15 / 0.85.
+
+Gemini notes: the free tier allows 100 embedding requests per minute (each text counts), and Google sometimes overloads its larger models, so a `-flash-lite` model is the default. Temporary 429/503 errors are retried automatically. Check which models your key can use with `curl -H "x-goog-api-key: $GEMINI_API_KEY" https://generativelanguage.googleapis.com/v1beta/models`.
+
 ## Knowledge base (RAG)
 
-`/knowledge` holds IT articles, each embedded once with `nomic-embed-text`. A question retrieves the closest articles by cosine similarity (minimum score 0.58, within 0.15 of the best match) and the local LLM answers using only those, citing sources. If nothing is relevant the LLM is not called. The same retrieval grounds the AI ticket analysis, and the sources are shown on the ticket. Use "Load sample articles" to add 14 demo articles.
+`/knowledge` holds IT articles, each embedded once with `nomic-embed-text`. A question retrieves the closest articles by cosine similarity (minimum score 0.58, within 0.15 of the best match) and the local LLM answers using only those, citing sources. If nothing is relevant the LLM is not called. The same retrieval grounds the AI ticket analysis, and the sources are shown on the ticket. Use "Load sample articles" to add 14 demo articles. Files (.txt, .md, .pdf, .docx, up to 5 MB) can be uploaded too: the text is extracted, split into passages of about 800 characters and each passage is embedded, so answers cite the right part of the file. Scanned PDFs are not supported (no OCR).
 
 ## Pages
 
-- `/` tickets, AI triage, Problem detection
-- `/knowledge` knowledge base and Q&A
-- `/evaluation` AI accuracy against labelled synthetic tickets
+- `/` Dashboard: ticket counts and status, tickets needing human review, AI override rate, average AI time, charts, detected Problems, knowledge base summary, demo data tools
+- `/report` Report an Issue: describe the problem, watch AI analysis and incident creation, follow the ticket status
+- `/tickets` Ticket Evaluation: every ticket raised by everyone with its status. Tickets that need a human (high priority, AI unsure, no grounding, part of an incident spike) are listed separately; a person approves or corrects the AI and updates the status
+- `/knowledge` Knowledge Base: upload files (.txt, .md, .pdf, .docx) and manage written articles
+- `/assistant` AI Assistant: chat that answers only from the knowledge base (query rewriting for follow-ups, vector retrieval, per-file cap, cited sources, no-answer guard)
+- `/evaluation` AI accuracy against labelled demo tickets (linked from the Dashboard)
 
 ## ServiceNow mode
 

@@ -4,7 +4,7 @@ import random
 import time
 from collections import Counter, defaultdict
 
-from . import db, llm
+from . import db, llm, pipeline
 
 JOB = {"running": False, "done": 0, "total": 0, "failed": 0}
 
@@ -40,6 +40,7 @@ async def run(batch) -> None:
                 ai["latency_s"] = round(time.time() - t0, 1)
                 with db.conn() as c:
                     c.execute("UPDATE tickets SET ai_json=? WHERE id=?", (json.dumps(ai), r["id"]))
+                pipeline.assess(r["id"])
             except Exception:
                 JOB["failed"] += 1
             JOB["done"] += 1
