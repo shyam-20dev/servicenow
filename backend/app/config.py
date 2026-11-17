@@ -9,6 +9,7 @@ SN_MODE = os.getenv("SN_MODE", "mock").lower()  # "mock" (simulated) or "live"
 SN_INSTANCE = os.getenv("SN_INSTANCE", "").rstrip("/")
 SN_USER = os.getenv("SN_USER", "")
 SN_PASSWORD = os.getenv("SN_PASSWORD", "")
+SN_CLOSE_CODE = os.getenv("SN_CLOSE_CODE", "").strip()   # optional: resolution code used when resolving incidents
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()  # "ollama" (local) or "gemini" (API)
 if LLM_PROVIDER not in ("ollama", "gemini"):

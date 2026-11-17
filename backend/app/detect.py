@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from . import config, db, llm, pipeline
+from . import config, db, llm, pipeline, sn_store
 
 FMT = "%Y-%m-%d %H:%M:%S"
 
@@ -90,7 +90,12 @@ async def detect(window_minutes: int = 60, min_size: int = 5, threshold: float |
             pid = cur.lastrowid
             c.execute("UPDATE problems SET number=? WHERE id=?", (f"PRB{1000 + pid:07d}", pid))
             c.executemany("UPDATE tickets SET problem_id=? WHERE id=?", [(pid, m["id"]) for m in members])
-        pipeline.flag_for_review([m["id"] for m in members], f"Part of incident spike {f'PRB{1000 + pid:07d}'}")
+        number = f"PRB{1000 + pid:07d}"
+        try:   # ServiceNow assigns the real number; if it is unreachable the worker retries later
+            number = await sn_store.sync_problem(pid) or number
+        except Exception as e:
+            print("problem sync to ServiceNow failed:", e, flush=True)
+        pipeline.flag_for_review([m["id"] for m in members], f"Part of incident spike {number}")
         created.append({"problem_id": pid, "tickets": len(members), "title": title,
                         "draft_error": draft_error,
                         "scenarios": sorted({m["scenario"] for m in members if m["scenario"]})})

@@ -2,7 +2,7 @@
 import json
 import time
 
-from . import db, kb, llm, servicenow
+from . import db, kb, llm, sn_store
 
 
 def get_ticket(ticket_id: int) -> dict | None:
@@ -62,12 +62,11 @@ async def analyze_ticket(ticket_id: int) -> None:
 
 
 async def push_ticket(ticket_id: int) -> None:
-    """Create the incident (live ServiceNow or local mock) and store its number."""
+    """Create the incident in ServiceNow (or simulate it in mock mode); sn_store saves its number."""
     t = get_ticket(ticket_id)
     if t["sn_number"]:
         raise ValueError(f"Already pushed as {t['sn_number']}")
-    res = await servicenow.create_incident(t)
-    _set(ticket_id, sn_number=res["number"], sn_sys_id=res["sys_id"])
+    await sn_store.sync_ticket(ticket_id)
 
 
 async def process(ticket_id: int) -> None:

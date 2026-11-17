@@ -51,3 +51,7 @@ Gemini notes: the free tier allows 100 embedding requests per minute (each text 
 ## ServiceNow mode
 
 `SN_MODE=mock` (default) simulates incident creation locally and is labelled "simulated" in the UI. Set `SN_MODE=live` plus `SN_INSTANCE`, `SN_USER`, `SN_PASSWORD` to create real incidents through the ServiceNow Table API, then `pm2 restart pl-backend`.
+
+### Where data lives (live mode)
+
+ServiceNow is the system of record: tickets are `incident` records and detected Problems are `problem` records. The AI analysis, review status, overrides and requester are stored in custom `u_pl_*` columns that the app creates on first start (ServiceNow may prefix them with the app scope, e.g. `x_..._u_pl_*`; the app looks the names up). SQLite (`problemlens.db`) is only a local cache for fast dashboards and clustering. Local changes are pushed in the background within about 5 seconds, ServiceNow-side changes (e.g. an incident resolved there) are pulled every minute, and if the local database is deleted it is rebuilt from ServiceNow at startup. Demo (synthetic) data is never sent to ServiceNow. `GET /api/sync` shows pending rows and errors, and `POST /api/sync/now` forces a push and pull. In `SN_MODE=mock` nothing is sent and SQLite is the only store. The knowledge base stays in SQLite.

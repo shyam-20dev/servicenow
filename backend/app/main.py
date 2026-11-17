@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 import asyncio
 
-from . import db, detect, embedsig, evaluation, kb, llm, pipeline, seed, servicenow
+from . import db, detect, embedsig, evaluation, kb, llm, pipeline, seed, servicenow, sn_store
 
 _tasks: set = set()
 
@@ -15,9 +15,26 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     db.init()
     embedsig.check()
+    await sn_store.start()
+
+
+@app.get("/api/sync")
+def sync_status():
+    """ServiceNow sync state: rows waiting to be pushed, last push/pull, last error."""
+    return sn_store.status()
+
+
+@app.post("/api/sync/now")
+async def sync_now():
+    """Push pending changes and refresh the cache from ServiceNow immediately."""
+    if not sn_store.live():
+        raise HTTPException(409, "SN_MODE is not live")
+    if not sn_store.STATE["schema_ok"]:
+        await sn_store.ensure_schema()
+    return {"push": await sn_store.push_dirty(), "pull": await sn_store.pull(), **sn_store.status()}
 
 
 class TicketIn(BaseModel):

@@ -83,9 +83,9 @@ async def ask(question: str) -> dict:
 
 # ---------- File upload ----------
 ALLOWED = {".txt", ".md", ".pdf", ".docx"}
-MAX_BYTES = 5 * 1024 * 1024
+MAX_BYTES = 10 * 1024 * 1024
 CHUNK_CHARS = 800
-MAX_CHUNKS = 200
+MAX_CHUNKS = 500
 
 
 def extract_text(filename: str, data: bytes) -> str:

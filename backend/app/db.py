@@ -64,7 +64,37 @@ TICKET_COLUMNS = {
     "reviewed_at": "TEXT",
     "resolution_notes": "TEXT",
     "resolved_at": "TEXT",
+    "sn_dirty": "INTEGER NOT NULL DEFAULT 0",   # changed locally, not yet written to ServiceNow
+    "sn_ver": "INTEGER NOT NULL DEFAULT 0",     # bumped on every change, so a sync never clears a newer edit
+    "sn_error": "TEXT",
 }
+
+PROBLEM_COLUMNS = {
+    "sn_sys_id": "TEXT",
+    "sn_dirty": "INTEGER NOT NULL DEFAULT 0",
+    "sn_ver": "INTEGER NOT NULL DEFAULT 0",
+    "sn_error": "TEXT",
+}
+
+# Flag rows for the ServiceNow sync worker. Column lists exclude the sn_* columns and embeddings, so the
+# worker's own bookkeeping never re-triggers a sync. Synthetic demo tickets are never synced.
+TRIGGERS = """
+DROP TRIGGER IF EXISTS trg_tickets_ins;
+DROP TRIGGER IF EXISTS trg_tickets_upd;
+DROP TRIGGER IF EXISTS trg_problems_ins;
+DROP TRIGGER IF EXISTS trg_problems_upd;
+CREATE TRIGGER trg_tickets_ins AFTER INSERT ON tickets WHEN NEW.is_synthetic = 0
+BEGIN UPDATE tickets SET sn_dirty=1, sn_ver=sn_ver+1 WHERE id=NEW.id; END;
+CREATE TRIGGER trg_tickets_upd AFTER UPDATE OF short_description, description, status, ai_json, requester,
+    review_status, review_reasons, final_category, final_priority, final_group, reviewed_at,
+    resolution_notes, resolved_at, problem_id ON tickets WHEN NEW.is_synthetic = 0
+BEGIN UPDATE tickets SET sn_dirty=1, sn_ver=sn_ver+1 WHERE id=NEW.id; END;
+CREATE TRIGGER trg_problems_ins AFTER INSERT ON problems
+BEGIN UPDATE problems SET sn_dirty=1, sn_ver=sn_ver+1 WHERE id=NEW.id; END;
+CREATE TRIGGER trg_problems_upd AFTER UPDATE OF title, root_cause, actions_json, status, ticket_count,
+    first_seen, last_seen ON problems
+BEGIN UPDATE problems SET sn_dirty=1, sn_ver=sn_ver+1 WHERE id=NEW.id; END;
+"""
 
 
 KB_COLUMNS = {
@@ -88,13 +118,22 @@ def init():
     with conn() as c:
         c.executescript(SCHEMA)
         have = {r["name"] for r in c.execute("PRAGMA table_info(tickets)")}
+        first_sync_run = "sn_dirty" not in have
         for name, ddl in TICKET_COLUMNS.items():
             if name not in have:
                 c.execute(f"ALTER TABLE tickets ADD COLUMN {name} {ddl}")
+        have_p = {r["name"] for r in c.execute("PRAGMA table_info(problems)")}
+        for name, ddl in PROBLEM_COLUMNS.items():
+            if name not in have_p:
+                c.execute(f"ALTER TABLE problems ADD COLUMN {name} {ddl}")
         have_kb = {r["name"] for r in c.execute("PRAGMA table_info(kb_articles)")}
         for name, ddl in KB_COLUMNS.items():
             if name not in have_kb:
                 c.execute(f"ALTER TABLE kb_articles ADD COLUMN {name} {ddl}")
+        if first_sync_run:   # databases created before the ServiceNow sync existed: upload what is already there
+            c.execute("UPDATE tickets SET sn_dirty=1, sn_ver=1 WHERE is_synthetic=0")
+            c.execute("UPDATE problems SET sn_dirty=1, sn_ver=1")
+        c.executescript(TRIGGERS)
 
 
 def row_to_dict(r: sqlite3.Row) -> dict:

@@ -117,16 +117,18 @@ _TASKS = {"document": "RETRIEVAL_DOCUMENT", "query": "RETRIEVAL_QUERY", "similar
 
 async def _gemini_embed(texts, task):
     out = []
-    if True:
-        for i in range(0, len(texts), 50):
-            reqs = [{"model": f"models/{config.GEMINI_EMBED_MODEL}",
-                     "content": {"parts": [{"text": t}]},
-                     "taskType": _TASKS.get(task, "SEMANTIC_SIMILARITY"),
-                     "outputDimensionality": config.GEMINI_EMBED_DIMS} for t in texts[i:i + 50]]
-            r = await _gemini_post(f"{config.GEMINI_BASE_URL}/models/{config.GEMINI_EMBED_MODEL}:batchEmbedContents",
-                                   {"requests": reqs})
-            _gemini_check(r)
-            out.extend(e["values"] for e in r.json()["embeddings"])
+    BATCH = 10  # smaller batches to avoid payload-size and rate-limit errors on large uploads
+    for i in range(0, len(texts), BATCH):
+        reqs = [{"model": f"models/{config.GEMINI_EMBED_MODEL}",
+                 "content": {"parts": [{"text": t}]},
+                 "taskType": _TASKS.get(task, "SEMANTIC_SIMILARITY"),
+                 "outputDimensionality": config.GEMINI_EMBED_DIMS} for t in texts[i:i + BATCH]]
+        r = await _gemini_post(f"{config.GEMINI_BASE_URL}/models/{config.GEMINI_EMBED_MODEL}:batchEmbedContents",
+                               {"requests": reqs}, timeout=120)
+        _gemini_check(r)
+        out.extend(e["values"] for e in r.json()["embeddings"])
+        if i + BATCH < len(texts):
+            await asyncio.sleep(0.5)  # breathing room between batches to avoid rate limits
     return out
 
 
